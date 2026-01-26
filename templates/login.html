@@ -1,0 +1,78 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>HR Login</title>
+    <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="/static/css/style.css">
+    <style>
+        body {
+            display: flex;
+            align-items: center;
+            justify-content: center;
+        }
+
+        .login-card {
+            width: 100%;
+            max-width: 400px;
+            padding: 2rem;
+        }
+    </style>
+</head>
+
+<body>
+    <div class="glass-card login-card">
+        <div style="text-align: center; margin-bottom: 2rem;">
+            <h2>HR Login</h2>
+            <p style="color: var(--text-muted)">Please sign in to continue</p>
+        </div>
+        <form id="login-form">
+            <div class="form-group">
+                <label for="email">Email</label>
+                <input type="email" id="email" required placeholder="admin@example.com">
+            </div>
+            <div class="form-group">
+                <label for="password">Password</label>
+                <input type="password" id="password" required placeholder="••••••••">
+            </div>
+            <div class="form-actions">
+                <button type="submit" class="btn btn-primary" style="width: 100%; justify-content: center;">Sign
+                    In</button>
+            </div>
+        </form>
+        <div style="margin-top: 1rem; text-align: center;">
+            <a href="/" style="color: var(--text-muted); text-decoration: none; font-size: 0.9rem;">Back to
+                Dashboard</a>
+        </div>
+    </div>
+
+    <script>
+        document.getElementById('login-form').addEventListener('submit', async (e) => {
+            e.preventDefault();
+            const email = document.getElementById('email').value;
+            const password = document.getElementById('password').value;
+
+            try {
+                const response = await fetch('/login', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ email, password })
+                });
+
+                if (response.ok) {
+                    window.location.href = '/';
+                } else {
+                    const data = await response.json();
+                    alert(data.error || 'Login failed');
+                }
+            } catch (error) {
+                console.error(error);
+                alert('An error occurred');
+            }
+        });
+    </script>
+</body>
+
+</html>
