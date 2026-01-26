@@ -23,23 +23,24 @@ def get_db_connection():
 
 def init_db():
     """Initializes the database and tables."""
-    # Connect to MySQL server (without database specified first to create it)
-    temp_config = DB_CONFIG.copy()
-    temp_config.pop('database')
-    
     try:
-        conn = mysql.connector.connect(**temp_config)
-        cursor = conn.cursor()
-        
-        # Create Database
-        cursor.execute(f"CREATE DATABASE IF NOT EXISTS {DB_CONFIG['database']}")
-        print(f"Database {DB_CONFIG['database']} checked/created.")
-        
-        conn.close()
-        
-        # Now connect to the database to create tables
+        # Try connecting directly to the database first (Cloud providers create it for you)
         conn = get_db_connection()
         if conn is None:
+            # If failed, maybe it doesn't exist? Try creating it (Local execution)
+            temp_config = DB_CONFIG.copy()
+            temp_config.pop('database')
+            conn = mysql.connector.connect(**temp_config)
+            cursor = conn.cursor()
+            cursor.execute(f"CREATE DATABASE IF NOT EXISTS {DB_CONFIG['database']}")
+            print(f"Database {DB_CONFIG['database']} checked/created.")
+            conn.close()
+            
+            # Reconnect with DB
+            conn = get_db_connection()
+            
+        if conn is None:
+            print("Failed to connect to database.")
             return
             
         cursor = conn.cursor()
