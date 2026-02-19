@@ -2,3 +2,7 @@ flask
 flasgger
 mysql-connector-python
 gunicorn
+Flask-SQLAlchemy
+Flask-Migrate
+PyJWT
+cryptography

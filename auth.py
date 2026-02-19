@@ -1,17 +1,36 @@
-from flask import Blueprint, request, jsonify, session
-from database import get_db_connection
+from flask import Blueprint, request, jsonify, current_app
+from database import db
+from models import User, Role
 from werkzeug.security import check_password_hash
+import jwt
+import datetime
 import functools
 
 auth_bp = Blueprint('auth', __name__)
 
-def login_required(view):
-    @functools.wraps(view)
-    def wrapped_view(**kwargs):
-        if 'user_id' not in session:
-            return jsonify({'error': 'Authentication required'}), 401
-        return view(**kwargs)
-    return wrapped_view
+def token_required(f):
+    @functools.wraps(f)
+    def decorated(*args, **kwargs):
+        token = None
+        # Check header
+        if 'Authorization' in request.headers:
+            auth_header = request.headers['Authorization']
+            if auth_header.startswith("Bearer "):
+                token = auth_header.split(" ")[1]
+            else:
+                token = auth_header
+        
+        if not token:
+            return jsonify({'message': 'Token is missing!'}), 401
+        
+        try:
+            data = jwt.decode(token, current_app.secret_key, algorithms=["HS256"])
+            current_user = User.query.filter_by(id=data['user_id']).first()
+        except Exception as e:
+            return jsonify({'message': 'Token is invalid!', 'error': str(e)}), 401
+            
+        return f(current_user, *args, **kwargs)
+    return decorated
 
 @auth_bp.route('/login', methods=['POST'])
 def login():
@@ -22,31 +41,37 @@ def login():
     if not email or not password:
         return jsonify({'error': 'Email and password are required'}), 400
 
-    conn = get_db_connection()
-    if conn is None:
-        return jsonify({'error': 'Database connection failed'}), 500
-    
-    cursor = conn.cursor(dictionary=True)
-    cursor.execute("SELECT * FROM hr WHERE email = %s", (email,))
-    user = cursor.fetchone()
-    cursor.close()
-    conn.close()
+    user = User.query.filter_by(email=email).first()
 
-    if user and user['password'] and check_password_hash(user['password'], password):
-        session.clear()
-        session['user_id'] = user['id']
-        session['user_name'] = user['name']
-        return jsonify({'message': 'Logged in successfully', 'user': {'name': user['name']}})
+    if user and check_password_hash(user.password, password):
+        # Generate token
+        token = jwt.encode({
+            'user_id': user.id,
+            'role': user.role.name,
+            'exp': datetime.datetime.utcnow() + datetime.timedelta(hours=24)
+        }, current_app.secret_key, algorithm="HS256")
+        
+        return jsonify({
+            'message': 'Logged in successfully',
+            'token': token,
+            'user': {
+                'id': user.id,
+                'name': user.name,
+                'email': user.email,
+                'role': user.role.name
+            }
+        })
     
     return jsonify({'error': 'Invalid credentials'}), 401
 
-@auth_bp.route('/logout', methods=['POST'])
-def logout():
-    session.clear()
-    return jsonify({'message': 'Logged out successfully'})
-
 @auth_bp.route('/check-auth', methods=['GET'])
-def check_auth():
-    if 'user_id' in session:
-        return jsonify({'authenticated': True, 'user': {'name': session.get('user_name')}})
-    return jsonify({'authenticated': False})
+@token_required
+def check_auth(current_user):
+    return jsonify({
+        'authenticated': True,
+        'user': {
+            'id': current_user.id,
+            'name': current_user.name,
+            'role': current_user.role.name
+        }
+    })

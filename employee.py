@@ -1,227 +1,125 @@
 from flask import Blueprint, request, jsonify
-from database import get_db_connection
-from flasgger import swag_from
-from auth import login_required
+from database import db
+from models import db, Employee, User
+from auth import token_required
+from helpers import log_activity, send_sms
 
 employee_bp = Blueprint('employee', __name__)
 
 @employee_bp.route('/employee', methods=['GET'])
-
 def get_employees():
-    """
-    Get all employees details
-    ---
-    responses:
-      200:
-        description: List of Employees
-        schema:
-          type: array
-          items:
-            type: object
-            properties:
-              id:
-                type: integer
-              name:
-                type: string
-              age:
-                type: integer
-              gender:
-                type: string
-              address:
-                type: string
-              hr_id:
-                type: integer
-    """
-    conn = get_db_connection()
-    if conn is None:
-        return jsonify({'error': 'Database connection failed'}), 500
-    
-    cursor = conn.cursor(dictionary=True)
-    cursor.execute("SELECT * FROM employee")
-    employees = cursor.fetchall()
-    cursor.close()
-    conn.close()
-    return jsonify(employees)
+    employees = Employee.query.all()
+    output = []
+    for emp in employees:
+        hr_name = 'Unassigned'
+        if emp.hr_id:
+            hr_user = User.query.get(emp.hr_id)
+            if hr_user:
+                hr_name = hr_user.name
+                
+        output.append({
+            'id': emp.id,
+            'name': emp.name,
+            'age': emp.age,
+            'gender': emp.gender,
+            'address': emp.address,
+            'hr_id': emp.hr_id,
+            'hr_name': hr_name,
+            'sponsor': emp.sponsor
+        })
+    return jsonify(output)
 
 @employee_bp.route('/employee', methods=['POST'])
-
-def add_employee():
-    """
-    Add a new Employee
-    ---
-    parameters:
-      - name: body
-        in: body
-        required: true
-        schema:
-          type: object
-          required:
-            - name
-          properties:
-            name:
-              type: string
-            age:
-              type: integer
-            gender:
-              type: string
-            address:
-              type: string
-            hr_id:
-              type: integer
-              description: ID of the HR manager
-            sponsor:
-              type: string
-    responses:
-      201:
-        description: Employee created
-      400:
-        description: Error
-    """
+@token_required
+def add_employee(current_user):
     data = request.get_json()
     name = data.get('name')
-    age = data.get('age')
-    gender = data.get('gender')
-    address = data.get('address')
-    hr_id = data.get('hr_id')
-    sponsor = data.get('sponsor')
-
+    
     if not name:
         return jsonify({'error': 'Name is required'}), 400
+        
+    email = data.get('email', f"{name.lower().replace(' ', '.')}@example.com") # Temp placeholder email generation
 
-    conn = get_db_connection()
-    if conn is None:
-        return jsonify({'error': 'Database connection failed'}), 500
+    # Create User account for Employee
+    from werkzeug.security import generate_password_hash
+    from models import Role, User
 
-    cursor = conn.cursor()
     try:
-        cursor.execute(
-            "INSERT INTO employee (name, age, gender, address, hr_id, sponsor) VALUES (%s, %s, %s, %s, %s, %s)",
-            (name, age, gender, address, hr_id, sponsor)
+        # Check for existing user email
+        if User.query.filter_by(email=email).first():
+             return jsonify({'error': 'Email already connected to an account'}), 400
+
+        employee_role = Role.query.filter_by(name='Employee').first()
+        if not employee_role:
+             return jsonify({'error': 'Employee Role not found'}), 500
+
+        # Create User
+        new_user = User(
+            name=name,
+            email=email,
+            password=generate_password_hash('123456'), # Default Password
+            role_id=employee_role.id
         )
-        conn.commit()
-        return jsonify({'message': 'Employee added successfully'}), 201
+        db.session.add(new_user)
+        db.session.flush() # Get ID
+
+        new_emp = Employee(
+            name=name,
+            email=email,
+            age=data.get('age'),
+            gender=data.get('gender'),
+            address=data.get('address'),
+            hr_id=data.get('hr_id'),
+            sponsor=data.get('sponsor'),
+            # We could link the User ID to the Employee record if needed, 
+            # but current model doesn't strictly enforce it via ForeignKey in expected direction.
+            # Assuming Employee model might be updated or we rely on email matching.
+        )
+        
+        db.session.add(new_emp)
+        db.session.commit()
+
+        # Log & SMS
+        log_activity(current_user.id, "ADD_EMPLOYEE", f"Added Employee & User: {data['name']}")
+        send_sms("123-456-7890", f"Welcome {data['name']}! Login with {email} / 123456")
+
+        return jsonify({'message': 'Employee and User account created successfully', 'id': new_emp.id}), 201
     except Exception as e:
+        db.session.rollback()
         return jsonify({'error': str(e)}), 400
-    finally:
-        cursor.close()
-        conn.close()
 
 @employee_bp.route('/employee/<int:id>', methods=['PUT'])
-
 def update_employee(id):
-    """
-    Update an Employee
-    ---
-    parameters:
-      - name: id
-        in: path
-        type: integer
-        required: true
-      - name: body
-        in: body
-        required: true
-        schema:
-          type: object
-          properties:
-            name:
-              type: string
-            age:
-              type: integer
-            gender:
-              type: string
-            address:
-              type: string
-            hr_id:
-              type: integer
-    responses:
-      200:
-        description: Employee updated
-      404:
-        description: Employee not found
-    """
     data = request.get_json()
-    conn = get_db_connection()
-    if conn is None:
-        return jsonify({'error': 'Database connection failed'}), 500
-
-    cursor = conn.cursor()
+    emp = Employee.query.get(id)
     
-    # Check if Employee exists
-    cursor.execute("SELECT * FROM employee WHERE id = %s", (id,))
-    if not cursor.fetchone():
-        cursor.close()
-        conn.close()
+    if not emp:
         return jsonify({'message': 'Employee not found'}), 404
 
-    # Build update query dynamically
-    fields = []
-    values = []
-    if 'name' in data:
-        fields.append("name = %s")
-        values.append(data['name'])
-    if 'age' in data:
-        fields.append("age = %s")
-        values.append(data['age'])
-    if 'gender' in data:
-        fields.append("gender = %s")
-        values.append(data['gender'])
-    if 'address' in data:
-        fields.append("address = %s")
-        values.append(data['address'])
-    if 'hr_id' in data:
-        fields.append("hr_id = %s")
-        values.append(data['hr_id'])
-    if 'sponsor' in data:
-        fields.append("sponsor = %s")
-        values.append(data['sponsor'])
-    
-    if not fields:
-         return jsonify({'message': 'No fields to update'}), 400
-
-    values.append(id)
-    query = f"UPDATE employee SET {', '.join(fields)} WHERE id = %s"
+    if 'name' in data: emp.name = data['name']
+    if 'age' in data: emp.age = data['age']
+    if 'gender' in data: emp.gender = data['gender']
+    if 'address' in data: emp.address = data['address']
+    if 'hr_id' in data: emp.hr_id = data['hr_id']
+    if 'sponsor' in data: emp.sponsor = data['sponsor']
     
     try:
-        cursor.execute(query, tuple(values))
-        conn.commit()
+        db.session.commit()
         return jsonify({'message': 'Employee updated successfully'})
     except Exception as e:
+        db.session.rollback()
         return jsonify({'error': str(e)}), 400
-    finally:
-        cursor.close()
-        conn.close()
 
 @employee_bp.route('/employee/<int:id>', methods=['DELETE'])
-
 def delete_employee(id):
-    """
-    Delete an Employee
-    ---
-    parameters:
-      - name: id
-        in: path
-        type: integer
-        required: true
-    responses:
-      200:
-        description: Employee deleted
-      404:
-        description: Employee not found
-    """
-    conn = get_db_connection()
-    if conn is None:
-        return jsonify({'error': 'Database connection failed'}), 500
-
-    cursor = conn.cursor()
-    
-    cursor.execute("DELETE FROM employee WHERE id = %s", (id,))
-    conn.commit()
-    
-    if cursor.rowcount == 0:
-        cursor.close()
-        conn.close()
+    emp = Employee.query.get(id)
+    if not emp:
         return jsonify({'message': 'Employee not found'}), 404
         
-    cursor.close()
-    conn.close()
-    return jsonify({'message': 'Employee deleted successfully'})
+    try:
+        db.session.delete(emp)
+        db.session.commit()
+        return jsonify({'message': 'Employee deleted successfully'})
+    except Exception as e:
+        db.session.rollback()
+        return jsonify({'error': str(e)}), 400
