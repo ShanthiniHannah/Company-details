@@ -2,14 +2,14 @@ from flask import Flask, render_template
 from flasgger import Swagger
 from database import init_db, db
 from flask_migrate import Migrate
-from hr import hr_bp
-from employee import employee_bp
-from auth import auth_bp
-from donor import donor_bp
-from volunteer import volunteer_bp
-from project import project_bp
-from finance import finance_bp
-from analytics import analytics_bp
+from routes.hr import hr_bp
+from routes.employee import employee_bp
+from routes.auth import auth_bp
+from routes.donor import donor_bp
+from routes.volunteer import volunteer_bp
+from routes.project import project_bp
+from routes.finance import finance_bp
+from routes.analytics import analytics_bp
 
 app = Flask(__name__)
 app.secret_key = 'super_secret_key_for_demo_only' # Change this in production
